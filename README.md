@@ -4,6 +4,8 @@ Handheld heartbeat-sensor tablet. The screen is a multi-floor room simulation: s
 
 It does not sense real people through walls.
 
+How the screen works, what is still undecided, and the UK parts list are in [PULSEGRID.md](PULSEGRID.md). That file is the handoff for a local session.
+
 ## Run
 
 ```bash
