@@ -1,4 +1,5 @@
 import { classifyContact, motionFromHist } from "./geom.js";
+import { geometryOverride } from "./plans.js";
 import { getScenario } from "./scenarios.js";
 
 const HIST_KEEP = 2.4;
@@ -110,14 +111,17 @@ function beamSees(bearing, sweep, view) {
 
 export function sampleContact(state, contact) {
   const scenario = state.scenario;
-  const floor = floorDef(state, Math.round(contact.z / scenario.floorH));
+  const floorIndex = Math.round(contact.z / scenario.floorH);
+  const floor = floorDef(state, floorIndex);
   const opFloor = floorDef(state, state.op.floor);
+  const drawn = geometryOverride(state.plan, floorIndex);
+  const drawnHere = geometryOverride(state.plan, state.op.floor);
   const geometry = classifyContact(
     state.op,
     contact,
     scenario.floorH,
-    opFloor.walls,
-    floor.rooms
+    drawnHere ? drawnHere.walls : opFloor.walls,
+    drawn ? drawn.rooms : floor.rooms
   );
   const speed = motionFromHist(contact.hist).speed;
   const bpm =
@@ -173,7 +177,7 @@ export function createState(scenarioId = "block") {
     trackNearest: true,
     pings: 186,
     time: 0,
-    audio: false,
+    audio: true,
     accum: 0,
   };
   for (const c of contacts) placePhase(c, scenario.floorH);

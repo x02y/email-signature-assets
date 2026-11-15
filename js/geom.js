@@ -37,6 +37,34 @@ export function relation(dz) {
   return "level";
 }
 
+/**
+ * Count storeys from heartbeat height. Empty storeys between the lowest and
+ * highest return still count, and the operator's own storey is included.
+ * Heights and operatorZ are metres. Pitch is the assumed storey height.
+ */
+export function senseFloors(heights, operatorZ, pitch) {
+  if (!(pitch > 0) || !Number.isFinite(operatorZ)) {
+    return { floors: 0, occupied: 0, below: 0, above: 0, pitch: 0, low: 0, high: 0 };
+  }
+  const you = Math.round(operatorZ / pitch);
+  const clean = (heights || []).filter((z) => Number.isFinite(z));
+  if (!clean.length) {
+    return { floors: 1, occupied: 0, below: 0, above: 0, pitch, low: operatorZ, high: operatorZ };
+  }
+  const ids = clean.map((z) => Math.round(z / pitch));
+  const minI = Math.min(you, ...ids);
+  const maxI = Math.max(you, ...ids);
+  return {
+    floors: maxI - minI + 1,
+    occupied: new Set(ids).size,
+    below: you - minI,
+    above: maxI - you,
+    pitch,
+    low: Math.min(...clean),
+    high: Math.max(...clean),
+  };
+}
+
 export function gait(speed) {
   if (speed < 0.3) return "STILL";
   if (speed < 1.8) return "WALK";

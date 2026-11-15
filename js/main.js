@@ -10,8 +10,10 @@ import {
   m1,
   powerStatus,
   screenAlive,
+  senseFloors,
   signedRelative,
 } from "./geom.js";
+import { deletePlan, downloadBank, emptyPlan, listPlans, savePlan, unpackBank, writeBankToFolder } from "./plans.js";
 import { SCENARIOS } from "./scenarios.js";
 import {
   createState,
@@ -40,6 +42,10 @@ let planTf = null;
 let lastPings = state.pings;
 let audioCtx = null;
 let holdTimer = null;
+let mapMode = "sense";
+let activePlan = null;
+let draftRect = null;
+let drawAnchor = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -130,6 +136,12 @@ function paint(list, track) {
   paintDetail(track, floor);
   paintPower();
   paintCensus(list);
+  paintSense(list);
+  for (const button of $("map-modes").querySelectorAll("[data-mapmode]")) {
+    button.setAttribute("aria-pressed", button.dataset.mapmode === mapMode ? "true" : "false");
+  }
+  const name = $("plan-name");
+  if (name && document.activeElement !== name) name.value = activePlan ? activePlan.name : "";
 
   const missed = list.filter((c) => !c.scanned);
   $("blind").textContent = missed.length
@@ -142,6 +154,22 @@ function paint(list, track) {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function paintSense(list) {
+  const visible = list.filter((contact) => contact.visible);
+  const sensed = senseFloors(
+    visible.map((contact) => contact.z),
+    state.op.floor * state.scenario.floorH,
+    state.scenario.floorH
+  );
+  const pitch = `PITCH ${m1(state.scenario.floorH)} m`;
+  if (!sensed.occupied) {
+    $("sense-line").textContent = `SENSE · NO HEARTBEATS IN RANGE · JUST YOU · ${pitch}`;
+    return;
+  }
+  $("sense-line").textContent =
+    `SENSE · ${sensed.floors} STOREYS · ON ${sensed.occupied} · ${sensed.below} BELOW · ${sensed.above} ABOVE · ${pitch}`;
 }
 
 function paintDetail(track, floor) {
@@ -333,12 +361,34 @@ function setPlug(on) {
   power.negotiate = on ? 0.85 : 0;
 }
 
+const SHEET_TITLE = { power: "POWER", rig: "RIG", plans: "PLANS" };
+
 function openSheet(which) {
   sheet = which;
   $("sheet").hidden = false;
-  $("sheet-title").textContent = which === "power" ? "POWER" : "RIG";
+  $("sheet-title").textContent = SHEET_TITLE[which] || "PLANS";
   $("panel-power").hidden = which !== "power";
   $("panel-rig").hidden = which !== "rig";
+  $("panel-plans").hidden = which !== "plans";
+  if (which === "plans") refreshBank();
+}
+
+function thump(when, freq, dur, level) {
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(freq, when);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(28, freq * 0.45), when + dur);
+  gain.gain.setValueAtTime(level, when);
+  gain.gain.exponentialRampToValueAtTime(0.001, when + dur);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(when);
+  osc.stop(when + dur + 0.02);
+}
+
+function heartbeat(when) {
+  thump(when, 90, 0.09, 0.08);
+  thump(when + 0.12, 58, 0.12, 0.05);
 }
 
 function pingIfNeeded() {
@@ -346,23 +396,16 @@ function pingIfNeeded() {
     lastPings = state.pings;
     return;
   }
-  if (state.pings > lastPings) {
-    lastPings = state.pings;
-    try {
-      if (!audioCtx) audioCtx = new AudioContext();
-      const now = audioCtx.currentTime;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = 880;
-      gain.gain.setValueAtTime(0.03, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
-      osc.connect(gain).connect(audioCtx.destination);
-      osc.start(now);
-      osc.stop(now + 0.08);
-    } catch {
-      /* audio is optional */
-    }
+  const fresh = state.pings - lastPings;
+  lastPings = state.pings;
+  if (fresh <= 0) return;
+  try {
+    if (!audioCtx || audioCtx.state === "suspended") return;
+    const count = Math.min(4, fresh);
+    const now = audioCtx.currentTime;
+    for (let i = 0; i < count; i++) heartbeat(now + i * 0.26);
+  } catch {
+    /* audio is optional */
   }
 }
 
@@ -370,6 +413,124 @@ function worldFromPlan(event) {
   const rect = $("plan").getBoundingClientRect();
   const tf = planTf || planTransform(rect.width, rect.height, state.scenario.bounds);
   return tf.toWorld(event.clientX - rect.left, event.clientY - rect.top);
+}
+
+function ensureDraft() {
+  if (!activePlan) activePlan = emptyPlan(`${state.scenario.name} SKETCH`);
+  return activePlan;
+}
+
+function applyMap() {
+  state.plan = mapMode === "sense" ? null : activePlan;
+  state.draftRect = draftRect;
+}
+
+function planStatus(text) {
+  $("plan-status").textContent = text;
+}
+
+async function refreshBank() {
+  const list = $("bank-list");
+  let rows = [];
+  try {
+    rows = await listPlans();
+  } catch {
+    planStatus("THE BANK ON THIS DEVICE COULD NOT BE READ");
+    return;
+  }
+  list.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement("li");
+    empty.className = "fine";
+    empty.textContent = "BANK EMPTY";
+    list.append(empty);
+    return;
+  }
+  for (const plan of rows) {
+    const item = document.createElement("li");
+    item.className = "bank-row";
+    const label = document.createElement("span");
+    label.className = "who";
+    label.textContent = `${plan.name} · ${plan.rooms.length} ROOMS`;
+    const load = document.createElement("button");
+    load.type = "button";
+    load.className = "key";
+    load.textContent = "LOAD";
+    load.addEventListener("click", () => {
+      activePlan = structuredClone(plan);
+      mapMode = "draw";
+      planStatus(`LOADED ${plan.name}. DRAW OR SENSE TO GO BACK TO THE BUILDING WALLS.`);
+    });
+    const drop = document.createElement("button");
+    drop.type = "button";
+    drop.className = "key";
+    drop.textContent = "DELETE";
+    drop.addEventListener("click", async () => {
+      await deletePlan(plan.id);
+      if (activePlan && activePlan.id === plan.id) activePlan = null;
+      refreshBank();
+    });
+    item.append(label, load, drop);
+    list.append(item);
+  }
+}
+
+async function exportBank(toUsb) {
+  let plans = [];
+  try {
+    plans = await listPlans();
+  } catch {
+    plans = [];
+  }
+  if (activePlan && !plans.some((plan) => plan.id === activePlan.id)) plans.unshift(activePlan);
+  if (!plans.length) {
+    planStatus("NOTHING TO EXPORT. DRAW A ROOM AND SAVE IT FIRST.");
+    return;
+  }
+  try {
+    if (toUsb) {
+      const how = await writeBankToFolder(plans);
+      planStatus(how === "usb" ? "WROTE pulsegrid-plans.json TO THE FOLDER YOU PICKED" : "BROWSER SAVED pulsegrid-plans.json INSTEAD");
+    } else {
+      downloadBank(plans);
+      planStatus("DOWNLOAD STARTED: pulsegrid-plans.json");
+    }
+  } catch (error) {
+    if (error && error.name === "AbortError") return;
+    planStatus("EXPORT DID NOT FINISH");
+  }
+}
+
+function readFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onImportFile(file) {
+  if (!file) return;
+  if (file.type.startsWith("image/")) {
+    if (file.size > 1_200_000) {
+      planStatus("THAT PICTURE IS OVER 1.2 MB. USE A SMALLER BLUEPRINT IMAGE.");
+      return;
+    }
+    const plan = ensureDraft();
+    plan.blueprint = { floor: state.op.floor, dataUrl: await readFile(file), name: file.name };
+    mapMode = "draw";
+    planStatus(`BLUEPRINT UNDER THE FLOOR YOU ARE ON. SAVE TO KEEP IT IN THE BANK.`);
+    return;
+  }
+  try {
+    const plans = unpackBank(await file.text());
+    for (const plan of plans) await savePlan(plan);
+    await refreshBank();
+    planStatus(`IMPORTED ${plans.length} PLAN${plans.length === 1 ? "" : "S"} INTO THE BANK`);
+  } catch {
+    planStatus("THAT FILE IS NOT A PULSEGRID PLAN BANK");
+  }
 }
 
 function placeOperator(world) {
@@ -393,8 +554,18 @@ function bind() {
     const button = event.target.closest("[data-scenario]");
     if (!button) return;
     state = switchScenario(state, button.dataset.scenario);
+    mapMode = "sense";
+    draftRect = null;
     $("stack").dataset.scenario = "";
     $("tracks").dataset.key = "";
+  });
+
+  $("map-modes").addEventListener("click", (event) => {
+    const button = event.target.closest("[data-mapmode]");
+    if (!button) return;
+    mapMode = button.dataset.mapmode;
+    if (mapMode === "draw") ensureDraft();
+    if (mapMode === "plans") openSheet("plans");
   });
 
   $("stack").addEventListener("click", (event) => {
@@ -437,6 +608,35 @@ function bind() {
   });
   $("battery-btn").addEventListener("click", () => openSheet("power"));
   $("rig-btn").addEventListener("click", () => openSheet("rig"));
+  $("plan-name").addEventListener("input", () => {
+    if (!activePlan) ensureDraft();
+    activePlan.name = $("plan-name").value.slice(0, 48) || "UNTITLED";
+  });
+  $("save-plan").addEventListener("click", async () => {
+    if (!activePlan || !activePlan.rooms.length && !activePlan.blueprint) {
+      planStatus("DRAW A ROOM OR IMPORT A BLUEPRINT BEFORE SAVING");
+      return;
+    }
+    try {
+      await savePlan(activePlan);
+      planStatus(`SAVED ${activePlan.name} ON THIS DEVICE`);
+      refreshBank();
+    } catch {
+      planStatus("THE BANK ON THIS DEVICE COULD NOT BE WRITTEN");
+    }
+  });
+  $("undo-room").addEventListener("click", () => {
+    if (!activePlan || !activePlan.rooms.length) return;
+    activePlan.rooms.pop();
+  });
+  $("import-btn").addEventListener("click", () => $("import-file").click());
+  $("import-file").addEventListener("change", () => {
+    const file = $("import-file").files && $("import-file").files[0];
+    $("import-file").value = "";
+    onImportFile(file);
+  });
+  $("export-bank").addEventListener("click", () => exportBank(false));
+  $("export-usb").addEventListener("click", () => exportBank(true));
   $("sheet-close").addEventListener("click", () => {
     $("sheet").hidden = true;
     sheet = null;
@@ -475,6 +675,11 @@ function bind() {
   plan.addEventListener("pointerdown", (event) => {
     plan.setPointerCapture(event.pointerId);
     const world = worldFromPlan(event);
+    if (mapMode === "draw") {
+      drawAnchor = world;
+      dragging = false;
+      return;
+    }
     const hit = samples().find((contact) => Math.hypot(contact.x - world.x, contact.y - world.y) < 0.85);
     if (hit) {
       state.pin = hit.id;
@@ -486,14 +691,50 @@ function bind() {
     placeOperator(world);
   });
   plan.addEventListener("pointermove", (event) => {
+    if (mapMode === "draw" && drawAnchor) {
+      const world = worldFromPlan(event);
+      const x = Math.min(drawAnchor.x, world.x);
+      const y = Math.min(drawAnchor.y, world.y);
+      draftRect = { x, y, w: Math.abs(world.x - drawAnchor.x), h: Math.abs(world.y - drawAnchor.y) };
+      return;
+    }
     if (!dragging) return;
     placeOperator(worldFromPlan(event));
   });
-  plan.addEventListener("pointerup", () => {
+  plan.addEventListener("pointerup", (event) => {
+    if (mapMode === "draw" && drawAnchor) {
+      const world = worldFromPlan(event);
+      const x = Math.min(drawAnchor.x, world.x);
+      const y = Math.min(drawAnchor.y, world.y);
+      const w = Math.abs(world.x - drawAnchor.x);
+      const h = Math.abs(world.y - drawAnchor.y);
+      if (w >= 0.5 && h >= 0.5) {
+        const sketch = ensureDraft();
+        sketch.rooms.push({
+          id: crypto.randomUUID(),
+          floor: state.op.floor,
+          x,
+          y,
+          w,
+          h,
+          name: `ROOM ${sketch.rooms.length + 1}`,
+        });
+      }
+      drawAnchor = null;
+      draftRect = null;
+    }
     dragging = false;
   });
   plan.addEventListener("pointercancel", () => {
     dragging = false;
+    drawAnchor = null;
+    draftRect = null;
+  });
+
+  window.addEventListener("pointerdown", () => {
+    if (!state.audio) return;
+    if (!audioCtx) audioCtx = new AudioContext();
+    if (audioCtx.state === "suspended") audioCtx.resume();
   });
 
   $("nudge").addEventListener("pointerdown", (event) => {
@@ -536,6 +777,7 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  applyMap();
   if (screenAlive(power)) step(state, dt);
   advancePower(power, dt, loadWatts(state.audio));
   const drawn = draw();

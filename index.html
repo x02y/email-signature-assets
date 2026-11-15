@@ -48,7 +48,15 @@
           <div class="stack" id="stack" aria-label="Floors"></div>
           <aside class="aside">
             <div class="scenes" id="scenes" role="group" aria-label="Room simulation"></div>
-            <p id="blurb"></p>
+            <div class="map-head">
+              <p id="blurb"></p>
+              <div class="presets" id="map-modes" role="group" aria-label="Map mode">
+                <button type="button" class="key" data-mapmode="sense" aria-pressed="true">SENSE</button>
+                <button type="button" class="key" data-mapmode="draw">DRAW</button>
+                <button type="button" class="key" data-mapmode="plans">PLANS</button>
+              </div>
+              <p id="sense-line" class="fine"></p>
+            </div>
             <div class="presets" id="presets">
               <button type="button" class="key" data-scanmode="all">ALL FLOORS</button>
               <button type="button" class="key" data-scanmode="near">±1 FLOOR</button>
@@ -83,7 +91,7 @@
         <footer class="hud-bot">
           <button type="button" class="key" id="view-toggle" aria-pressed="true">ARC</button>
           <button type="button" class="key" id="range-btn">20 m</button>
-          <button type="button" class="key" id="audio-btn" aria-pressed="false">AUDIO</button>
+          <button type="button" class="key" id="audio-btn" aria-pressed="true">AUDIO</button>
           <button type="button" class="key" id="battery-btn">58%</button>
           <button type="button" class="key" id="rig-btn">RIG</button>
           <button type="button" class="key" id="fill-btn">HOLD</button>
@@ -114,6 +122,25 @@
             <h3>WHAT THE PACK IS DOING</h3>
             <p class="fine">The tablet runs from a 48 Wh pack. Nothing is plugged into the wall. A USB-C PD source at 15 V / 3 A offers 45 W. The Pi and the backlight draw about 8 W from that bus. The rest, after a little conversion loss, fast-charges the cells. ELAPSE jumps the pack clock so a half-hour charge is visible. The watt figures themselves are the real budget. Live drain ticks in real time on the watt-hours.</p>
           </div>
+          <div id="panel-plans" hidden>
+            <p class="fine" id="plan-status">SENSE counts storeys from the heights of heartbeats in range. DRAW adds rooms on the plan. PLANS keeps them on this device.</p>
+            <div class="row">
+              <input id="plan-name" class="plan-name" maxlength="48" aria-label="Plan name" placeholder="PLAN NAME">
+              <button type="button" class="key" id="save-plan">SAVE</button>
+              <button type="button" class="key" id="undo-room">UNDO ROOM</button>
+            </div>
+            <div class="row">
+              <button type="button" class="key" id="import-btn">IMPORT</button>
+              <button type="button" class="key" id="export-bank">EXPORT</button>
+              <button type="button" class="key" id="export-usb">TO USB</button>
+              <input id="import-file" type="file" accept="image/png,image/jpeg,image/webp,.json,application/json" hidden>
+            </div>
+            <ul id="bank-list" aria-label="Saved plans"></ul>
+            <h3>THREE MODES</h3>
+            <p class="fine">SENSE ignores any drawing and counts storeys from heartbeat height. The lowest return and the highest return, with you in between, and a storey pitch taken from the building. Empty storeys between two heartbeats still count.</p>
+            <p class="fine">DRAW: drag a rectangle on the plan. It is a room on the floor you are standing on. SAVE puts the plan in the bank on this device. UNDO ROOM removes the last one.</p>
+            <p class="fine">IMPORT takes a picture of a blueprint, or a pulsegrid-plans.json file. The picture sits under the floor you were on when you imported it. EXPORT downloads that file. TO USB asks for a folder, which on the Pi can be a memory stick you just plugged in, and writes pulsegrid-plans.json there.</p>
+          </div>
           <div id="panel-rig" hidden>
             <p class="fine">PULSEGRID MK1 is the shell in your hands: a Raspberry Pi 5, a 7-inch capacitive glass, and a 48 Wh pack, running this screen.</p>
             <h3>COMPUTE</h3>
@@ -123,7 +150,7 @@
             <h3>THE SENSOR PICTURE</h3>
             <p class="fine">Heartbeats, walls, and floors are a room simulation. Slant range is the straight-line distance from the tablet to the person, including the height between floors, shown to 0.1 m. Speed is how far that person actually moved over the last couple of seconds, worked out as distance over time. THRU WALL means the line crosses a wall on your floor. THRU FLOOR means they are on another deck. The scope does not listen through real walls.</p>
             <h3>HOW TO READ IT</h3>
-            <p class="fine">▲ above you, cyan. ● your level, green. ▼ below you, amber. The yellow arrow is you, and it points the way the arc is facing. Drag the plan to walk. N E S W step you 0.6 m. The stack on the right of the scope is the building: tap a plate to scan that floor, tap the letter to go and stand there. Scan more than one floor to keep the people above and below.</p>
+            <p class="fine">▲ above you, cyan. ● your level, green. ▼ below you, amber. The yellow arrow is you, and it points the way the arc is facing. Drag the plan to walk. N E S W step you 0.6 m. The stack on the right of the scope is the building: tap a plate to scan that floor, tap the letter to go and stand there. Scan more than one floor to keep the people above and below. AUDIO plays a heartbeat each time the sweep detects someone in range.</p>
           </div>
         </div>
         <div id="dead" class="dead-screen" hidden>

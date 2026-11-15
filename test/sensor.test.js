@@ -12,8 +12,10 @@ import {
   createPower,
   screenAlive,
   powerStatus,
+  senseFloors,
   PACK_WH,
 } from "../js/geom.js";
+import { packBank, roomsToWalls, unpackBank } from "../js/plans.js";
 import { createState, sensedContacts, step } from "../js/sim.js";
 
 test("distance is one decimal metre", () => {
@@ -86,6 +88,26 @@ test("turning floors off hides the people on them", () => {
   assert.ok(vertical.every((c) => c.rel !== "level"));
   assert.ok(vertical.some((c) => c.rel === "above"));
   assert.ok(vertical.some((c) => c.rel === "below"));
+});
+
+test("heartbeat heights imply the storeys between them", () => {
+  const sensed = senseFloors([0, 3, 9], 3, 3);
+  assert.equal(sensed.floors, 4);
+  assert.equal(sensed.occupied, 3);
+  assert.equal(sensed.below, 1);
+  assert.equal(sensed.above, 2);
+  const alone = senseFloors([], 3, 3);
+  assert.equal(alone.floors, 1);
+  assert.equal(alone.occupied, 0);
+});
+
+test("a drawn room is four walls and survives an export", () => {
+  const walls = roomsToWalls([{ x: 1, y: 2, w: 4, h: 3, floor: 0, name: "LAB" }]);
+  assert.equal(walls.length, 4);
+  const packed = packBank([{ id: "p1", name: "LAB BLOCK", rooms: [{ id: "r1", floor: 1, x: 0, y: 0, w: 2, h: 2, name: "LAB" }] }]);
+  const plans = unpackBank(packed);
+  assert.equal(plans[0].name, "LAB BLOCK");
+  assert.equal(plans[0].rooms[0].floor, 1);
 });
 
 test("usb-c fast charge fills the pack and battery runs it unplugged", () => {

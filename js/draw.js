@@ -1,4 +1,5 @@
 import { m1 } from "./geom.js";
+import { geometryOverride } from "./plans.js";
 import { egoOf, sweepAngle } from "./sim.js";
 
 const ABOVE = "#7ef6ff";
@@ -106,9 +107,39 @@ export function drawRadar(ctx, w, h, state, samples) {
   return layout;
 }
 
+function strokeWalls(ctx, layout, state, walls) {
+  ctx.beginPath();
+  for (const wall of walls) {
+    const a = project(layout, wall.x1 - state.op.x, wall.y1 - state.op.y, state.op.heading, state.range);
+    const b = project(layout, wall.x2 - state.op.x, wall.y2 - state.op.y, state.op.heading, state.range);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  }
+  ctx.stroke();
+}
+
 function drawWalls(ctx, layout, state) {
   const { scenario, op, scan } = state;
   const mine = op.floor;
+  if (state.plan) {
+    for (const floor of scenario.floors) {
+      const delta = floor.id - mine;
+      if (floor.id !== mine && (!scan.has(floor.id) || Math.abs(delta) > 1)) continue;
+      const drawn = geometryOverride(state.plan, floor.id);
+      if (!drawn || !drawn.walls.length) continue;
+      ctx.save();
+      ctx.lineWidth = floor.id === mine ? 1.6 : 1;
+      ctx.strokeStyle =
+        floor.id === mine
+          ? "rgba(180, 255, 210, 0.8)"
+          : delta > 0
+            ? "rgba(126, 246, 255, 0.35)"
+            : "rgba(255, 191, 60, 0.35)";
+      strokeWalls(ctx, layout, state, drawn.walls);
+      ctx.restore();
+    }
+    return;
+  }
   for (const floor of scenario.floors) {
     const delta = floor.id - mine;
     if (floor.id !== mine && (!scan.has(floor.id) || Math.abs(delta) > 1)) continue;
@@ -120,14 +151,7 @@ function drawWalls(ctx, layout, state) {
         : delta > 0
           ? "rgba(126, 246, 255, 0.28)"
           : "rgba(255, 191, 60, 0.28)";
-    ctx.beginPath();
-    for (const wall of floor.walls) {
-      const a = project(layout, wall.x1 - op.x, wall.y1 - op.y, op.heading, state.range);
-      const b = project(layout, wall.x2 - op.x, wall.y2 - op.y, op.heading, state.range);
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-    }
-    ctx.stroke();
+    strokeWalls(ctx, layout, state, floor.walls);
     ctx.restore();
   }
 }
@@ -376,12 +400,24 @@ export function drawPlan(ctx, w, h, state, samples) {
   ctx.fillStyle = "#03150c";
   ctx.fillRect(0, 0, w, h);
   const floor = state.scenario.floors.find((f) => f.id === state.op.floor) || state.scenario.floors[0];
+  const drawn = state.plan ? geometryOverride(state.plan, state.op.floor) : null;
 
   ctx.save();
+  const print = state.plan && state.plan.blueprint && state.plan.blueprint.floor === state.op.floor
+    ? cachedImage(state.plan.blueprint.dataUrl)
+    : null;
+  if (print) {
+    const origin = tf.toScreen(state.scenario.bounds.minX, state.scenario.bounds.maxY);
+    const far = tf.toScreen(state.scenario.bounds.maxX, state.scenario.bounds.minY);
+    ctx.globalAlpha = 0.55;
+    ctx.drawImage(print, origin.x, origin.y, far.x - origin.x, far.y - origin.y);
+    ctx.globalAlpha = 1;
+  }
   ctx.lineWidth = 1;
   ctx.strokeStyle = "rgba(140, 255, 190, 0.7)";
   ctx.beginPath();
-  for (const wall of floor.walls) {
+  const walls = drawn ? drawn.walls : floor.walls;
+  for (const wall of walls) {
     const a = tf.toScreen(wall.x1, wall.y1);
     const b = tf.toScreen(wall.x2, wall.y2);
     ctx.moveTo(a.x, a.y);
@@ -391,9 +427,16 @@ export function drawPlan(ctx, w, h, state, samples) {
   ctx.fillStyle = "rgba(180, 255, 210, 0.45)";
   ctx.font = '10px "Share Tech Mono", ui-monospace, monospace';
   ctx.textAlign = "center";
-  for (const room of floor.rooms) {
+  const labels = drawn ? drawn.rooms : floor.rooms;
+  for (const room of labels) {
     const p = tf.toScreen(room.x + room.w / 2, room.y + room.h / 2);
     ctx.fillText(room.name, p.x, p.y);
+  }
+  if (state.draftRect) {
+    const a = tf.toScreen(state.draftRect.x, state.draftRect.y + state.draftRect.h);
+    const b = tf.toScreen(state.draftRect.x + state.draftRect.w, state.draftRect.y);
+    ctx.strokeStyle = "#ffe14a";
+    ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
   }
 
   for (const sample of samples) {
@@ -460,6 +503,18 @@ export function drawEcg(ctx, w, h, time, bpm) {
     else ctx.lineTo(x, y);
   }
   ctx.stroke();
+}
+
+const imageCache = new Map();
+
+function cachedImage(dataUrl) {
+  let image = imageCache.get(dataUrl);
+  if (!image) {
+    image = new Image();
+    image.src = dataUrl;
+    imageCache.set(dataUrl, image);
+  }
+  return image.complete && image.naturalWidth ? image : null;
 }
 
 function ecgSample(p) {

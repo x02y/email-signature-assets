@@ -20,6 +20,12 @@ The Pi’s USB-C port wants **5 V**. A Pi 5 is happiest with a supply that can d
 
 The on-screen contract (15 V / 3 A, 45 W) is the pack charger, not the Pi’s input. In a real shell that 15 V stops at a charger board, which makes 5 V for the Pi and puts the spare watts into the cells. Unplugged, a 48 Wh pack at about 8 W runs the Pi and the backlight for several hours.
 
+## Map
+
+SENSE counts storeys from the heights of heartbeats in range. DRAW lets you drag rooms onto the floor you are standing on and save them in a bank on the device. PLANS imports a blueprint picture or a `pulsegrid-plans.json` file, and exports that file. TO USB writes it into a folder you pick, which on the Pi can be a memory stick.
+
+AUDIO plays a heartbeat each time the sweep detects someone in range.
+
 ```bash
 chromium --kiosk --app=http://127.0.0.1:8080
 ```
